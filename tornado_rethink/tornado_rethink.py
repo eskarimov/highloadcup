@@ -5,7 +5,6 @@ import tornado.httpserver
 import tornado.process
 import tornado.netutil
 import ujson, datetime, calendar
-from datetime import timedelta
 from dateutil.relativedelta import relativedelta
 import logging
 import pylibmc
@@ -28,9 +27,9 @@ class EntitiesHandler(tornado.web.RequestHandler):
                 data = mc.get(entity + id)
             if data is None: # Then try to get ti from DB
                 with pool.get_resource() as res:
-                    connection = yield gen.with_timeout(timedelta(seconds=2), res.conn)
+                    connection = yield res.conn
                     id = int(id)
-                    data = yield gen.with_timeout(timedelta(seconds=2), r.table(entity).get(id).to_json().run(connection))
+                    data = yield r.table(entity).get(id).to_json().run(connection)
                     if data != 'null':
                         self.write(data)
                     else: # If record wasn't found in MC and DB - return 404
@@ -42,7 +41,7 @@ class EntitiesHandler(tornado.web.RequestHandler):
     def post(self, entity, id):
         id = int(id)
         with pool.get_resource() as res:
-            connection = yield gen.with_timeout(timedelta(seconds=2), res.conn)
+            connection = yield res.conn
             # check body is None
             try:
                 body = ujson.loads(self.request.body.decode('utf-8'))
@@ -50,7 +49,7 @@ class EntitiesHandler(tornado.web.RequestHandler):
                 raise tornado.web.HTTPError(400)
             # Check entity exists
             if entity in ['users', "locations", "visits"]:
-                data = yield gen.with_timeout(timedelta(seconds=2), r.table(entity).get_all(id).limit(1).count().run(connection))
+                data = yield r.table(entity).get_all(id).limit(1).count().run(connection)
                 if data == 0:
                     raise tornado.web.HTTPError(404)
             # Check fields are not empty and integer fields are ok
@@ -63,7 +62,7 @@ class EntitiesHandler(tornado.web.RequestHandler):
                     except:
                         raise tornado.web.HTTPError(400)
             # update records
-            update = yield gen.with_timeout(timedelta(seconds=2), r.table(entity).get(id).update(body, return_changes=True).run(connection, durability='soft'))
+            update = yield r.table(entity).get(id).update(body, return_changes=True).run(connection, durability='soft')
             # Check if we have any updates
             if len(update['changes']) != 0:
                 changed_row = update['changes'][0]['new_val']
@@ -78,8 +77,8 @@ class GetUserVisitsHandler(tornado.web.RequestHandler):
         id = int(id)
         with pool.get_resource() as res:
             # Check if user exists
-            connection = yield gen.with_timeout(timedelta(seconds=2), res.conn)
-            data = yield gen.with_timeout(timedelta(seconds=2), r.table('users').get_all(id).limit(1).count().run(connection))
+            connection = yield res.conn
+            data = yield r.table('users').get_all(id).limit(1).count().run(connection)
             if data == 0:
                 raise tornado.web.HTTPError(404)
             # Start build DB query
@@ -108,7 +107,7 @@ class GetUserVisitsHandler(tornado.web.RequestHandler):
                     elif argument == 'toDistance':
                         result = result.filter(r.row["distance"] < int(self.get_argument(argument)))
             # Final request
-            result = yield gen.with_timeout(timedelta(seconds=2), result.pluck('mark', 'visited_at', 'place').order_by('visited_at').run(connection))
+            result = yield result.pluck('mark', 'visited_at', 'place').order_by('visited_at').run(connection)
             self.write(ujson.dumps({"visits": result}, ensure_ascii=False))
 
 
@@ -117,9 +116,9 @@ class GetLocationAvgMark(tornado.web.RequestHandler):
     def get(self, id):
         id = int(id)
         with pool.get_resource() as res:
-            connection = yield gen.with_timeout(timedelta(seconds=2), res.conn)
+            connection = yield res.conn
             # Check if user exists
-            data = yield gen.with_timeout(timedelta(seconds=2), r.table('locations').get_all(id).limit(1).count().run(connection))
+            data = yield r.table('locations').get_all(id).limit(1).count().run(connection)
             if data == 0:
                 raise tornado.web.HTTPError(404)
             # Start build DB query
@@ -161,7 +160,7 @@ class GetLocationAvgMark(tornado.web.RequestHandler):
                         else:
                             raise tornado.web.HTTPError(400)
             # Final request
-            result = yield gen.with_timeout(timedelta(seconds=2), result.avg('mark').default(None).run(connection))
+            result = yield result.avg('mark').default(None).run(connection)
             if result is not None:  # if no result - return avg: 0.0
                 self.write(ujson.dumps({'avg': round(result, 5)}))
             else:
@@ -187,14 +186,14 @@ class NewEntity(tornado.web.RequestHandler):
                 except:
                     raise tornado.web.HTTPError(400)
         with pool.get_resource() as res:
-            connection = yield gen.with_timeout(timedelta(seconds=2), res.conn)
+            connection = yield res.conn
             if entity in ['users', "locations", "visits"]:
                 # Check entity exist
-                data = yield gen.with_timeout(timedelta(seconds=2), r.table(entity).get_all(int(body['id'])).limit(1).count().run(connection))
+                data = yield r.table(entity).get_all(int(body['id'])).limit(1).count().run(connection)
                 if data != 0:
                     raise tornado.web.HTTPError(400)
             # Inser new record
-            yield gen.with_timeout(timedelta(seconds=2), r.table(entity).insert(body).run(connection, durability='soft'))
+            yield r.table(entity).insert(body).run(connection, durability='soft')
             with mc_pool.reserve() as mc:
                 mc.set(entity + str(body['id']), body) # Update MC
             self.write(ujson.dumps({}))
